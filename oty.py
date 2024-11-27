@@ -14,6 +14,7 @@ from datetime import datetime
 import json
 import hashlib
 from pathlib import Path
+import select
 
 @dataclass
 class OTYConfig:
@@ -89,7 +90,7 @@ class Colors:
     INFO = f"[{Fore.BLUE}{ColoramaStyle.BRIGHT}INFO{ColoramaStyle.RESET_ALL}]"
     SUCCESS = f"[{Fore.GREEN}{ColoramaStyle.BRIGHT}DONE{ColoramaStyle.RESET_ALL}]"
     WARNING = f"[{Fore.YELLOW}{ColoramaStyle.BRIGHT}WARN{ColoramaStyle.RESET_ALL}]"
-    ERROR = f"[{Fore.RED}{ColoramaStyle.BRIGHT}ERR{ColoramaStyle.RESET_ALL}]"
+    ERROR = f"[{Fore.RED}{ColoramaStyle.BRIGHT}FAIL{ColoramaStyle.RESET_ALL}]"
     COMMAND = f"[{Fore.YELLOW}CMND{ColoramaStyle.RESET_ALL}]"
     BRAND = f"{Fore.CYAN}[OTY]{ColoramaStyle.RESET_ALL}"
     STEP = f"[{Fore.GREEN}STEP{ColoramaStyle.RESET_ALL}]"
@@ -240,6 +241,40 @@ class WorkflowExecutionEngine:
         except Exception as e:
             self.print_error(f"{Colors.ERROR} Failed to clear state: {e}")
 
+    def _validate_variables_and_commands(self, workflow: Dict, variables: Dict) -> tuple[bool, List[str], List[str], List[str]]:
+        undefined_vars = set()
+        invalid_paths = []
+        missing_commands = []
+
+        for step in workflow.get('steps', []):
+            command = step.get('command', '')
+            
+            import re
+            vars_in_command = re.findall(r'{{(\w+)}}', command)
+            for var in vars_in_command:
+                if var not in variables:
+                    undefined_vars.add(var)
+            
+            if undefined_vars:
+                continue
+            
+            test_command = command
+            for var, value in variables.items():
+                test_command = test_command.replace(f'{{{{{var}}}}}', str(value))
+            
+            paths = re.findall(r'(?:^|\s)(/[^\s]+)', test_command)
+            for path in paths:
+                if not os.path.exists(path):
+                    invalid_paths.append(path)
+            
+            cmd_executable = test_command.split()[0]
+            if not cmd_executable.startswith('/'):
+                from shutil import which
+                if which(cmd_executable) is None:
+                    missing_commands.append(cmd_executable)
+        
+        return bool(undefined_vars or invalid_paths or missing_commands), list(undefined_vars), invalid_paths, missing_commands
+
     def execute_workflow(self, template_path: str, target: str, dry_run: bool = False, resume: bool = False):
         try:
             self.current_template_path = template_path
@@ -264,22 +299,38 @@ class WorkflowExecutionEngine:
             variables = workflow.get('variables', {})
             variables['TARGET'] = target
             
-            undefined_vars = set()
-            for step in workflow.get('steps', []):
-                command = step.get('command', '')
-
-                import re
-                vars_in_command = re.findall(r'{{(\w+)}}', command)
-                for var in vars_in_command:
-                    if var not in variables:
-                        undefined_vars.add(var)
+            has_issues, undefined_vars, invalid_paths, missing_commands = self._validate_variables_and_commands(workflow, variables)
             
-            if undefined_vars:
-                self.print_warning(f"{Colors.WARNING} The following variables need to be defined:")
-                for var in undefined_vars:
-                    value = click.prompt(f"Enter value for {var}", type=str)
-                    variables[var] = value
-                print()
+            if has_issues:
+                self.print_warning(f"{Colors.WARNING} pre execution validation found issues:")
+                
+                if undefined_vars:
+                    self.print_warning(f"{Colors.WARNING} Undefined variables detected:")
+                    for var in undefined_vars:
+                        value = click.prompt(f"Enter value for {var}", type=str)
+                        variables[var] = value
+                
+                if invalid_paths:
+                    self.print_error(f"{Colors.ERROR} Invalid paths detected:")
+                    for path in invalid_paths:
+                        self.print_error(f"  - {path}")
+                
+                if missing_commands:
+                    self.print_error(f"{Colors.ERROR} missing commands detected:")
+                    for cmd in missing_commands:
+                        self.print_error(f"  - {cmd}")
+                
+                if invalid_paths or missing_commands:
+                    if not click.confirm(f"     {Colors.WARNING} continue such issues?", default=False):
+                        self.print_error(f"{Colors.ERROR} execution aborted due to some issues")
+                        return
+                
+                has_issues, undefined_vars, invalid_paths, missing_commands = self._validate_variables_and_commands(workflow, variables)
+                if undefined_vars:
+                    self.print_error(f"{Colors.ERROR} still have undefined variables after prompting. aborting.")
+                    return
+            
+            self.print_success(f"{Colors.SUCCESS} pre execution validation completed")
             
             if dry_run:
                 self.print_info(f"{Colors.INFO} Dry run mode - Commands to be executed:")
@@ -319,17 +370,38 @@ class WorkflowExecutionEngine:
                                 universal_newlines=True
                             )
                             
-                            while True:
-                                output = process.stdout.readline()
-                                if output == '' and process.poll() is not None:
-                                    break
-                                if output:
-                                    print(f"    {output.strip()}")
+                            while process.poll() is None:
+                                try:
+                                    # Read input with timeout to allow for interruption
+                                    rlist, _, _ = select.select([sys.stdin, process.stdout], [], [], 0.1)
+                                    
+                                    if process.stdout in rlist:
+                                        output = process.stdout.readline()
+                                        if output:
+                                            print(f"    {output.strip()}")
+                                    
+                                    if sys.stdin in rlist:
+                                        # Check for Ctrl+D
+                                        if not sys.stdin.readline():
+                                            self.print_warning(f"{Colors.WARNING}{ColoramaStyle.BRIGHT} Step skipped by user (Ctrl+D){ColoramaStyle.RESET_ALL}")
+                                            process.terminate()
+                                            try:
+                                                process.wait(timeout=5)
+                                            except subprocess.TimeoutExpired:
+                                                process.kill()
+                                            break
+                                
+                                except (IOError, select.error):
+                                    # Handle potential errors during select/read operations
+                                    continue
                             
                             _, stderr = process.communicate()
                             
-                            if process.returncode == 0:
-                                self.print_success(f"{Colors.SUCCESS} {name} completed successfully")
+                            if process.returncode == 0 or process.returncode == -15:  # -15 is SIGTERM
+                                if process.returncode == -15:
+                                    self.print_warning(f"{Colors.WARNING} {name} skipped")
+                                else:
+                                    self.print_success(f"{Colors.BRAND}{Colors.SUCCESS} {name} completed successfully")
                             else:
                                 self.print_error(f"{Colors.ERROR} {name} failed: {stderr}")
                                 if not step.get('continue_on_error', False):
@@ -349,7 +421,7 @@ class WorkflowExecutionEngine:
                 self.save_state(workflow['name'], target, completed_steps, variables)
 
         except KeyboardInterrupt:
-            self.print_warning(f"\n{Colors.WARNING} Execution paused. Use --resume flag to continue later.")
+            self.print_warning(f"{Colors.WARNING} Execution paused. Use --resume flag to continue later.")
             self.save_state(workflow['name'], target, completed_steps, variables)
             sys.exit(0)
 
