@@ -1,9 +1,3 @@
-<h1 align="center"> 
-  
-  `OTY (One Tool YAML)` 
-
-</h1>
-
 <p align="center">
   <img src="https://github.com/user-attachments/assets/c2a04338-900c-43ff-932f-9314a3d7bbef" alt="OTY Banner" width="600"/>
 </p>
@@ -21,6 +15,12 @@
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <a href="https://twitter.com/1hehaq"><img src="https://img.shields.io/twitter/follow/1hehaq.svg?logo=X"></a>
 </p>
+
+<h2 align="center"> 
+  
+  `OTY (One Tool and YAML)` 
+
+</h2>
 
 <p align="center">
   OTY is a powerful, flexible workflow automation tool that transforms complex workflows into simple, reproducible YAML-based scripts. Whether you're a Developer, DevOps engineer, Security Researcher, or System Administrator, OTY streamlines your repetitive tasks with elegance and precision.
@@ -147,20 +147,3 @@ steps:
 - [ ] Plugin System
 - [ ] Step Timeout Functionality
 - [ ] Community Templates Library
-
-## `Contributing`
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## `License`
-
-Distributed under the MIT License. See `LICENSE` for more information.
-
-## `Contact`
-
-Twitter: [@1hehaq](https://twitter.com/1hehaq)
-Project Link: [https://github.com/1hehaq/oty](https://github.com/1hehaq/oty)
