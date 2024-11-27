@@ -372,7 +372,6 @@ class WorkflowExecutionEngine:
                             
                             while process.poll() is None:
                                 try:
-                                    # Read input with timeout to allow for interruption
                                     rlist, _, _ = select.select([sys.stdin, process.stdout], [], [], 0.1)
                                     
                                     if process.stdout in rlist:
@@ -381,7 +380,6 @@ class WorkflowExecutionEngine:
                                             print(f"    {output.strip()}")
                                     
                                     if sys.stdin in rlist:
-                                        # Check for Ctrl+D
                                         if not sys.stdin.readline():
                                             self.print_warning(f"{Colors.WARNING}{ColoramaStyle.BRIGHT} Step skipped by user (Ctrl+D){ColoramaStyle.RESET_ALL}")
                                             process.terminate()
@@ -392,16 +390,15 @@ class WorkflowExecutionEngine:
                                             break
                                 
                                 except (IOError, select.error):
-                                    # Handle potential errors during select/read operations
                                     continue
                             
                             _, stderr = process.communicate()
                             
-                            if process.returncode == 0 or process.returncode == -15:  # -15 is SIGTERM
+                            if process.returncode == 0 or process.returncode == -15:
                                 if process.returncode == -15:
                                     self.print_warning(f"{Colors.WARNING} {name} skipped")
                                 else:
-                                    self.print_success(f"{Colors.BRAND}{Colors.SUCCESS} {name} completed successfully")
+                                    self.print_success(f"{Colors.SUCCESS} {name} completed successfully")
                             else:
                                 self.print_error(f"{Colors.ERROR} {name} failed: {stderr}")
                                 if not step.get('continue_on_error', False):
@@ -414,14 +411,15 @@ class WorkflowExecutionEngine:
                         if not step.get('continue_on_error', False):
                             raise
                 else:
-                    self.print_error(f"{Colors.ERROR} Some variables were not replaced in command: {command}")
-                    raise Exception("Variable substitution incomplete")
+                    self.print_error(f"{Colors.ERROR} some variables were not replaced in command: {command}")
+                    raise Exception("variable substitution incomplete")
                 
                 completed_steps.append(idx)
                 self.save_state(workflow['name'], target, completed_steps, variables)
 
         except KeyboardInterrupt:
-            self.print_warning(f"{Colors.WARNING} Execution paused. Use --resume flag to continue later.")
+            print()
+            self.print_warning(f"{Colors.WARNING} execution paused. use --resume flag to continue later.")
             self.save_state(workflow['name'], target, completed_steps, variables)
             sys.exit(0)
 
