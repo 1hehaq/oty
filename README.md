@@ -12,9 +12,9 @@
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#-installation">Installation</a> •
-  <a href="#-workflow-template-schema">Template</a> •
-  <a href="#-commands">Usage</a> •
-  <a href="#-planned-features">Planned Features</a>
+  <a href="#example-templates--usage">Template</a> •
+  <a href="#commands">Usage</a> •
+  <a href="#planned-features">Plans</a>
 </p> 
 
 <p align="center">
@@ -266,54 +266,6 @@ I want to convert my current automation process into an OTY workflow template. H
 
 Please help me structure this into a valid OTY workflow YAML template, ensuring all steps are clear and variables are well-defined.
 </pre>
-
-<h3>
-  
-  `Commands`
-
-</h3>
-
-<h5>
-  
-  `Workflow Execution`
-
-</h5>
-
-```bash
-oty run <template> <target> # execute a workflow
-```
-
-```bash
-oty run <template> <target> --dry-run # simulate workflow
-```
-
-```bash
-oty run <template> <target> --resume # resume interrupted workflow
-```
-
-<h5>
-  
-  `Template Validation`
-
-</h5>
-
-```bash
-oty validate <template> # validate workflow template
-```
-
-<h5>
-  
-  `State Management`
-
-</h5>
-
-```bash
-oty list-states # list all saved workflow states
-```
-
-```bash
-oty clear-state <workflow_name> <target> # clear a specific workflow state
-```
 
 <h3>
   
