@@ -1,0 +1,38 @@
+name: Workflow by haq
+author: 1hehaq
+description: "Comprehensive bug bounty reconnaissance and vulnerability scanning workflow"
+variables:
+  OUTPUT_DIR: "{{TARGET}}"
+  THREADS: "50"
+  WORDLIST: "/home/haq/wordlist/SecLists/Discovery/DNS/dns-Jhaddix.txt"
+
+steps:
+  - name: "Create Output Directory"
+    command: "mkdir -p {{OUTPUT_DIR}}"
+
+  - name: "Subdomain Enumeration with Subfinder"
+    command: "subfinder -d {{TARGET}} -o {{OUTPUT_DIR}}/subdomains.txt"
+
+  - name: "Merge and Sort Subdomains"
+    command: "cat {{OUTPUT_DIR}}/subdomains.txt {{OUTPUT_DIR}}/amass_subdomains.txt | sort -u > {{OUTPUT_DIR}}/all_subdomains.txt"
+
+  - name: "DNS Resolution Check"
+    command: "puredns resolve {{OUTPUT_DIR}}/all_subdomains.txt -r /home/haq/wordlist/SecLists/Miscellaneous/dns-resolvers.txt -w {{OUTPUT_DIR}}/resolved.txt"
+
+  - name: "HTTP Probe for Live Hosts"
+    command: "cat {{OUTPUT_DIR}}/resolved.txt | httpx -silent -o {{OUTPUT_DIR}}/live_hosts.txt"
+
+  - name: "Directory Bruteforcing with FFuF"
+    command: "ffuf -w {{WORDLIST}} -u FUZZ.{{TARGET}} -o {{OUTPUT_DIR}}/dir_brute.json"
+
+  - name: "Vulnerability Scanning with Nuclei"
+    command: "nuclei -l {{OUTPUT_DIR}}/live_hosts.txt -o {{OUTPUT_DIR}}/vulnerabilities.txt -rl 100 -as -t /home/haq/templates/http"
+
+  - name: "JavaScript Analysis with LinkFinder"
+    command: "linkfinder -i {{OUTPUT_DIR}}/live_hosts.txt -o {{OUTPUT_DIR}}/js_endpoints.html"
+
+  - name: "URLs Discovery with urlfinder"
+    command: "urlfinder -d {{TARGET}} -all {{OUTPUT_DIR}}/urls.txt"
+
+  - name: "CMS Detection with WhatWeb"
+    command: "whatweb -i {{OUTPUT_DIR}}/live_hosts.txt --log-json={{OUTPUT_DIR}}/cms_detection.json"
