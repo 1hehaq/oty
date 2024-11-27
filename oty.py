@@ -11,6 +11,9 @@ from dataclasses import dataclass
 import colorama
 from colorama import Fore, Style as ColoramaStyle
 from datetime import datetime
+import json
+import hashlib
+from pathlib import Path
 
 @dataclass
 class OTYConfig:
@@ -21,6 +24,8 @@ class OTYConfig:
     log_dir: str = os.path.join(base_dir, 'logs')
     report_dir: str = os.path.join(base_dir, 'reports')
     cache_dir: str = os.path.join(base_dir, 'cache')
+    state_file: str = os.path.join(base_dir, 'resumeoty.cfg')
+    states_dir: str = os.path.join(base_dir, 'states')
     
     def __post_init__(self):
         for directory in [
@@ -29,7 +34,8 @@ class OTYConfig:
             self.workflow_dir, 
             self.log_dir, 
             self.report_dir, 
-            self.cache_dir
+            self.cache_dir,
+            self.states_dir
         ]:
             os.makedirs(directory, exist_ok=True)
 
@@ -67,8 +73,8 @@ WORKFLOW_SCHEMA = {
 }
 
 
-#  colors
 class Colors:
+    # colors
     BLUE = Fore.BLUE
     GREEN = Fore.GREEN
     RED = Fore.RED
@@ -95,6 +101,7 @@ class WorkflowExecutionEngine:
         self.config = config
         self.logger = self._setup_logging()
         self._print_banner()
+        self.current_state = {}
     
     def _setup_logging(self):
         try:
@@ -176,58 +183,176 @@ class WorkflowExecutionEngine:
             self.logger.error(f"Template validation failed: {e}")
             return False
 
-    def execute_workflow(self, template_path: str, target: str):
+    def _generate_state_id(self, workflow_name: str, target: str) -> str:
+        unique_string = f"{workflow_name}_{target}"
+        return hashlib.md5(unique_string.encode()).hexdigest()[:12]
+
+    def _get_state_file_path(self, workflow_name: str, target: str) -> Path:
+        state_id = self._generate_state_id(workflow_name, target)
+        return Path(self.config.states_dir) / f"state_{state_id}.json"
+
+    def list_saved_states(self) -> List[Dict[str, Any]]:
+        states = []
+        for state_file in Path(self.config.states_dir).glob("state_*.json"):
+            try:
+                with open(state_file, 'r') as f:
+                    state = json.load(f)
+                    state['state_file'] = state_file.name
+                    states.append(state)
+            except Exception as e:
+                self.print_warning(f"{Colors.WARNING} Failed to read state file {state_file}: {e}")
+        return states
+
+    def save_state(self, workflow_name: str, target: str, completed_steps: List[int], variables: Dict):
+        state = {
+            'workflow_name': workflow_name,
+            'template_path': self.current_template_path,
+            'target': target,
+            'completed_steps': completed_steps,
+            'variables': variables,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        state_file = self._get_state_file_path(workflow_name, target)
         try:
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=4)
+            self.print_info(f"{Colors.INFO} Execution state saved to {state_file}")
+        except Exception as e:
+            self.print_error(f"{Colors.ERROR} Failed to save state: {e}")
+
+    def load_state(self, workflow_name: str, target: str) -> Optional[Dict]:
+        state_file = self._get_state_file_path(workflow_name, target)
+        try:
+            if state_file.exists():
+                with open(state_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            self.print_error(f"{Colors.ERROR} Failed to load state: {e}")
+        return None
+
+    def clear_state(self, workflow_name: str, target: str):
+        state_file = self._get_state_file_path(workflow_name, target)
+        try:
+            if state_file.exists():
+                state_file.unlink()
+                self.print_info(f"{Colors.INFO} Cleared state for workflow '{workflow_name}' and target '{target}'")
+        except Exception as e:
+            self.print_error(f"{Colors.ERROR} Failed to clear state: {e}")
+
+    def execute_workflow(self, template_path: str, target: str, dry_run: bool = False, resume: bool = False):
+        try:
+            self.current_template_path = template_path
+            completed_steps = []
+            
             with open(template_path, 'r') as f:
                 workflow = yaml.safe_load(f)
             
+            if resume:
+                state = self.load_state(workflow['name'], target)
+                if state and state['template_path'] == template_path:
+                    completed_steps = state['completed_steps']
+                    variables = state['variables']
+                    self.print_info(f"{Colors.INFO} Resuming workflow from step {len(completed_steps) + 1}")
+                else:
+                    self.print_warning(f"{Colors.WARNING} No matching state found, starting from beginning")
+                    resume = False
+
             self.print_info(f"{Colors.INFO} Loaded workflow: {workflow['name']}")
             self.print_info(f"{Colors.INFO} Target: {target}\n")
             
             variables = workflow.get('variables', {})
             variables['TARGET'] = target
             
+            undefined_vars = set()
+            for step in workflow.get('steps', []):
+                command = step.get('command', '')
+
+                import re
+                vars_in_command = re.findall(r'{{(\w+)}}', command)
+                for var in vars_in_command:
+                    if var not in variables:
+                        undefined_vars.add(var)
+            
+            if undefined_vars:
+                self.print_warning(f"{Colors.WARNING} The following variables need to be defined:")
+                for var in undefined_vars:
+                    value = click.prompt(f"Enter value for {var}", type=str)
+                    variables[var] = value
+                print()
+            
+            if dry_run:
+                self.print_info(f"{Colors.INFO} Dry run mode - Commands to be executed:")
+                for step in workflow.get('steps', []):
+                    command = step.get('command', '')
+                    for var, value in variables.items():
+                        command = command.replace(f'{{{{{var}}}}}', str(value))
+                    self.print_debug(f"{Colors.COMMAND} {command}")
+                return
+            
             total_steps = len(workflow.get('steps', []))
             for idx, step in enumerate(workflow.get('steps', []), 1):
+                if resume and idx in completed_steps:
+                    self.print_info(f"{Colors.INFO} Skipping completed step {idx}")
+                    continue
+
                 name = step.get('name', 'Unnamed Step')
                 command = step.get('command', '')
                 
                 self.print_info(f"{Colors.STEP} {Colors.MAGENTA}{ColoramaStyle.BRIGHT}[{idx}/{total_steps}]{ColoramaStyle.RESET_ALL} {name}")
-                self.print_debug(f"{Colors.COMMAND} {Colors.WHITE}{Colors.DIM}{command}{ColoramaStyle.RESET_ALL}")
                 
                 for var, value in variables.items():
-                    command = command.replace(f'{{{{ {var} }}}}', str(value))
+                    command = command.replace(f'{{{{{var}}}}}', str(value))
                 
-                try:
-                    process = subprocess.Popen(
-                        command, 
-                        shell=True, 
-                        stdout=subprocess.PIPE, 
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        bufsize=1,
-                        universal_newlines=True
-                    )
-                    
-                    while True:
-                        output = process.stdout.readline()
-                        if output == '' and process.poll() is not None:
-                            break
-                        if output:
-                            print(f"    {output.strip()}")
-                    
-                    _, stderr = process.communicate()
-                    
-                    if process.returncode == 0:
-                        self.print_success(f"{Colors.SUCCESS} {name} completed successfully")
-                    else:
-                        self.print_error(f"{Colors.ERROR} {name} failed: {stderr}")
+                self.print_debug(f"{Colors.COMMAND} {Colors.WHITE}{Colors.DIM}{command}{ColoramaStyle.RESET_ALL}")
                 
-                except subprocess.TimeoutExpired:
-                    self.print_warning(f"{Colors.WARNING} {name} timed out")
-                except Exception as e:
-                    self.print_error(f"{Colors.ERROR} {name} execution error: {e}")
-        
+                if not any(var in command for var in ['{{', '}}']):
+                    try:
+                        if not dry_run:
+                            process = subprocess.Popen(
+                                command, 
+                                shell=True, 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                bufsize=1,
+                                universal_newlines=True
+                            )
+                            
+                            while True:
+                                output = process.stdout.readline()
+                                if output == '' and process.poll() is not None:
+                                    break
+                                if output:
+                                    print(f"    {output.strip()}")
+                            
+                            _, stderr = process.communicate()
+                            
+                            if process.returncode == 0:
+                                self.print_success(f"{Colors.SUCCESS} {name} completed successfully")
+                            else:
+                                self.print_error(f"{Colors.ERROR} {name} failed: {stderr}")
+                                if not step.get('continue_on_error', False):
+                                    raise Exception(f"Step '{name}' failed and continue_on_error is False")
+                
+                    except subprocess.TimeoutExpired:
+                        self.print_warning(f"{Colors.WARNING} {name} timed out")
+                    except Exception as e:
+                        self.print_error(f"{Colors.ERROR} {name} execution error: {e}")
+                        if not step.get('continue_on_error', False):
+                            raise
+                else:
+                    self.print_error(f"{Colors.ERROR} Some variables were not replaced in command: {command}")
+                    raise Exception("Variable substitution incomplete")
+                
+                completed_steps.append(idx)
+                self.save_state(workflow['name'], target, completed_steps, variables)
+
+        except KeyboardInterrupt:
+            self.print_warning(f"\n{Colors.WARNING} Execution paused. Use --resume flag to continue later.")
+            self.save_state(workflow['name'], target, completed_steps, variables)
+            sys.exit(0)
+
         except Exception as e:
             self.print_error(f"{Colors.ERROR} Workflow Execution Error: {e}")
             self.logger.error(f"Workflow execution failed: {e}")
@@ -243,7 +368,8 @@ def cli():
 @click.argument('target')
 @click.option('--dry-run', is_flag=True, help='Simulate workflow without execution')
 @click.option('--verbose', is_flag=True, help='Enable verbose logging')
-def run(template, target, dry_run, verbose):
+@click.option('--resume', is_flag=True, help='Resume previous execution if available')
+def run(template, target, dry_run, verbose, resume):
     config = OTYConfig()
     engine = WorkflowExecutionEngine(config)
     
@@ -251,10 +377,7 @@ def run(template, target, dry_run, verbose):
         engine.print_error(f"{Colors.ERROR} Template validation failed!")
         sys.exit(1)
     
-    if dry_run:
-        engine.print_success(f"{Colors.SUCCESS} Dry Run: Workflow validated successfully")
-    else:
-        engine.execute_workflow(template, target)
+    engine.execute_workflow(template, target, dry_run, resume)
 
 @cli.command()
 @click.argument('template', type=click.Path(exists=True))
@@ -266,6 +389,33 @@ def validate(template):
         engine.print_success(f"{Colors.SUCCESS} Template is valid!")
     else:
         engine.print_error(f"{Colors.ERROR} Template validation failed!")
+
+@cli.command()
+def list_states():
+    # list saved states
+    config = OTYConfig()
+    engine = WorkflowExecutionEngine(config)
+    states = engine.list_saved_states()
+    
+    if not states:
+        engine.print_info(f"{Colors.INFO} No saved states found")
+        return
+
+    print("\nSaved Workflow States:")
+    for state in states:
+        print(f"\n{Colors.CYAN}Workflow:{Colors.WHITE} {state['workflow_name']}")
+        print(f"{Colors.CYAN}Target:{Colors.WHITE} {state['target']}")
+        print(f"{Colors.CYAN}Progress:{Colors.WHITE} {len(state['completed_steps'])} steps completed")
+        print(f"{Colors.CYAN}Last Updated:{Colors.WHITE} {state['timestamp']}")
+        print(f"{Colors.CYAN}State File:{Colors.WHITE} {state['state_file']}")
+
+@cli.command()
+@click.argument('workflow_name')
+@click.argument('target')
+def clear_state(workflow_name, target):
+    config = OTYConfig()
+    engine = WorkflowExecutionEngine(config)
+    engine.clear_state(workflow_name, target)
 
 # main
 if __name__ == "__main__":
