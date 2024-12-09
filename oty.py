@@ -15,6 +15,7 @@ import json
 import hashlib
 from pathlib import Path
 import select
+import signal
 
 @dataclass
 class OTYConfig:
@@ -27,14 +28,14 @@ class OTYConfig:
     cache_dir: str = os.path.join(base_dir, 'cache')
     state_file: str = os.path.join(base_dir, 'resumeoty.cfg')
     states_dir: str = os.path.join(base_dir, 'states')
-    
+
     def __post_init__(self):
         for directory in [
-            self.base_dir, 
-            self.template_dir, 
-            self.workflow_dir, 
-            self.log_dir, 
-            self.report_dir, 
+            self.base_dir,
+            self.template_dir,
+            self.workflow_dir,
+            self.log_dir,
+            self.report_dir,
             self.cache_dir,
             self.states_dir
         ]:
@@ -103,11 +104,11 @@ class WorkflowExecutionEngine:
         self.logger = self._setup_logging()
         self._print_banner()
         self.current_state = {}
-    
+
     def _setup_logging(self):
         try:
             log_file_path = os.path.join(self.config.log_dir, 'oty.log')
-            
+
             logging.basicConfig(
                 level=logging.INFO,
                 format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -117,19 +118,19 @@ class WorkflowExecutionEngine:
                 ]
             )
             return logging.getLogger('OTYWorkflowEngine')
-        
+
         except Exception as e:
             print(f"{Colors.ERROR} Error setting up logging: {e}")
             logging.basicConfig(level=logging.INFO)
             return logging.getLogger('OTYWorkflowEngine')
-    
+
     def _print_banner(self):
         banner = """
-        
+
         ┌─┐┌┬┐┬ ┬
         │ │ │ └┬┘   {version}
         └─┘ ┴  ┴    {author}
-        
+
         """.format(
             version=f"{Colors.YELLOW}v1.0.0{Colors.RED}",
             author=f"{Colors.CYAN}{Colors.BRIGHT}@1hehaq{Colors.RED}"
@@ -137,7 +138,7 @@ class WorkflowExecutionEngine:
         print(f"{Colors.RED}{Colors.BRIGHT}{banner}{ColoramaStyle.RESET_ALL}")
         print(f"{Colors.BRAND}{Colors.INFO} Starting at: {Colors.WHITE}{Colors.DIM}{datetime.now().strftime(f'%Y-%m-%d %H:%M:%S')}{ColoramaStyle.RESET_ALL}")
         print(f"{Colors.BRAND}{Colors.INFO} Log file: {Colors.WHITE}{Colors.DIM}{os.path.join(self.config.log_dir, 'oty.log')}{ColoramaStyle.RESET_ALL}")
-    
+
     def print_info(self, message: str):
         print(f"{Colors.BRAND}{message} {ColoramaStyle.RESET_ALL}")
 
@@ -152,21 +153,21 @@ class WorkflowExecutionEngine:
 
     def print_debug(self, message: str):
         print(f"{Colors.BRAND}{message} {ColoramaStyle.RESET_ALL}")
-    
+
     def validate_workflow_template(self, template_path: str) -> bool:
         # validation
         try:
             if not os.path.exists(template_path):
                 self.print_error(f"Template file not found at {template_path}")
                 return False
-            
+
             with open(template_path, 'r') as f:
                 try:
                     workflow_data = yaml.safe_load(f)
                 except yaml.YAMLError as yaml_err:
                     self.print_error(f"{Colors.ERROR} YAML Parsing Error: {yaml_err}")
                     return False
-            
+
             try:
                 import jsonschema
                 jsonschema.validate(instance=workflow_data, schema=WORKFLOW_SCHEMA)
@@ -175,10 +176,10 @@ class WorkflowExecutionEngine:
             except jsonschema.ValidationError as val_err:
                 self.print_error(f"{Colors.ERROR} Template Validation Error: {val_err}")
                 return False
-            
+
             self.logger.info(f"Template {template_path} validated successfully")
             return True
-        
+
         except Exception as e:
             self.print_error(f"{Colors.ERROR} Unexpected error during template validation: {e}")
             self.logger.error(f"Template validation failed: {e}")
@@ -213,7 +214,7 @@ class WorkflowExecutionEngine:
             'variables': variables,
             'timestamp': datetime.now().isoformat()
         }
-        
+
         state_file = self._get_state_file_path(workflow_name, target)
         try:
             with open(state_file, 'w') as f:
@@ -248,41 +249,53 @@ class WorkflowExecutionEngine:
 
         for step in workflow.get('steps', []):
             command = step.get('command', '')
-            
+
             import re
             vars_in_command = re.findall(r'{{(\w+)}}', command)
             for var in vars_in_command:
                 if var not in variables:
                     undefined_vars.add(var)
-            
+
             if undefined_vars:
                 continue
-            
+
             test_command = command
             for var, value in variables.items():
                 test_command = test_command.replace(f'{{{{{var}}}}}', str(value))
-            
+
             paths = re.findall(r'(?:^|\s)(/[^\s]+)', test_command)
             for path in paths:
                 if not os.path.exists(path):
                     invalid_paths.append(path)
-            
+
             cmd_executable = test_command.split()[0]
             if not cmd_executable.startswith('/'):
                 from shutil import which
                 if which(cmd_executable) is None:
                     missing_commands.append(cmd_executable)
-        
+
         return bool(undefined_vars or invalid_paths or missing_commands), list(undefined_vars), invalid_paths, missing_commands
 
     def execute_workflow(self, template_path: str, target: str, dry_run: bool = False, resume: bool = False):
         try:
             self.current_template_path = template_path
             completed_steps = []
-            
+
             with open(template_path, 'r') as f:
                 workflow = yaml.safe_load(f)
-            
+
+            # variables
+            variables = workflow.get('variables', {}).copy()
+            variables['TARGET'] = target
+
+            for step in workflow.get('steps', []):
+                command = step.get('command', '')
+                for var, value in variables.items():
+                    placeholder = f'{{{{{var}}}}}'
+                    if placeholder in command:
+                        command = command.replace(placeholder, str(value))
+                step['command'] = command
+
             if resume:
                 state = self.load_state(workflow['name'], target)
                 if state and state['template_path'] == template_path:
@@ -295,43 +308,40 @@ class WorkflowExecutionEngine:
 
             self.print_info(f"{Colors.INFO} Loaded workflow: {workflow['name']}")
             self.print_info(f"{Colors.INFO} Target: {target}\n")
-            
-            variables = workflow.get('variables', {})
-            variables['TARGET'] = target
-            
+
             has_issues, undefined_vars, invalid_paths, missing_commands = self._validate_variables_and_commands(workflow, variables)
-            
+
             if has_issues:
                 self.print_warning(f"{Colors.WARNING} pre execution validation found issues:")
-                
+
                 if undefined_vars:
                     self.print_warning(f"{Colors.WARNING} Undefined variables detected:")
                     for var in undefined_vars:
                         value = click.prompt(f"Enter value for {var}", type=str)
                         variables[var] = value
-                
+
                 if invalid_paths:
                     self.print_error(f"{Colors.ERROR} Invalid paths detected:")
                     for path in invalid_paths:
                         self.print_error(f"  - {path}")
-                
+
                 if missing_commands:
                     self.print_error(f"{Colors.ERROR} missing commands detected:")
                     for cmd in missing_commands:
                         self.print_error(f"  - {cmd}")
-                
+
                 if invalid_paths or missing_commands:
                     if not click.confirm(f"     {Colors.WARNING} continue such issues?", default=False):
                         self.print_error(f"{Colors.ERROR} execution aborted due to some issues")
                         return
-                
+
                 has_issues, undefined_vars, invalid_paths, missing_commands = self._validate_variables_and_commands(workflow, variables)
                 if undefined_vars:
                     self.print_error(f"{Colors.ERROR} still have undefined variables after prompting. aborting.")
                     return
-            
+
             self.print_success(f"{Colors.SUCCESS} pre execution validation completed")
-            
+
             if dry_run:
                 self.print_info(f"{Colors.INFO} Dry run mode - Commands to be executed:")
                 for step in workflow.get('steps', []):
@@ -340,7 +350,7 @@ class WorkflowExecutionEngine:
                         command = command.replace(f'{{{{{var}}}}}', str(value))
                     self.print_debug(f"{Colors.COMMAND} {command}")
                 return
-            
+
             total_steps = len(workflow.get('steps', []))
             for idx, step in enumerate(workflow.get('steps', []), 1):
                 if resume and idx in completed_steps:
@@ -349,63 +359,65 @@ class WorkflowExecutionEngine:
 
                 name = step.get('name', 'Unnamed Step')
                 command = step.get('command', '')
-                
+
                 self.print_info(f"{Colors.STEP} {Colors.MAGENTA}{ColoramaStyle.BRIGHT}[{idx}/{total_steps}]{ColoramaStyle.RESET_ALL} {name}")
-                
-                for var, value in variables.items():
-                    command = command.replace(f'{{{{{var}}}}}', str(value))
-                
                 self.print_debug(f"{Colors.COMMAND} {Colors.WHITE}{Colors.DIM}{command}{ColoramaStyle.RESET_ALL}")
-                
+
                 if not any(var in command for var in ['{{', '}}']):
                     try:
                         if not dry_run:
                             process = subprocess.Popen(
-                                command, 
-                                shell=True, 
-                                stdout=subprocess.PIPE, 
+                                command,
+                                shell=True,
+                                stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 text=True,
                                 bufsize=1,
-                                universal_newlines=True
+                                universal_newlines=True,
+                                preexec_fn=os.setsid
                             )
-                            
+
+                            skip_requested = False
                             while process.poll() is None:
                                 try:
                                     rlist, _, _ = select.select([sys.stdin, process.stdout], [], [], 0.1)
-                                    
+
                                     if process.stdout in rlist:
                                         output = process.stdout.readline()
                                         if output:
                                             print(f"    {output.strip()}")
-                                    
+
                                     if sys.stdin in rlist:
                                         if not sys.stdin.readline():
-                                            self.print_warning(f"{Colors.WARNING}{ColoramaStyle.BRIGHT} Step skipped by user (Ctrl+D){ColoramaStyle.RESET_ALL}")
-                                            process.terminate()
-                                            try:
-                                                process.wait(timeout=5)
-                                            except subprocess.TimeoutExpired:
-                                                process.kill()
+                                            skip_requested = True
+                                            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                                            self.print_warning(f"{Colors.WARNING}{ColoramaStyle.BRIGHT} Step skipped by user{ColoramaStyle.RESET_ALL}")
                                             break
-                                
+
                                 except (IOError, select.error):
                                     continue
-                            
-                            _, stderr = process.communicate()
-                            
-                            if process.returncode == 0 or process.returncode == -15:
-                                if process.returncode == -15:
-                                    self.print_warning(f"{Colors.WARNING} {name} skipped")
-                                else:
+
+                            if not skip_requested:
+                                _, stderr = process.communicate()
+
+                                if process.returncode == 0:
                                     self.print_success(f"{Colors.SUCCESS} {name} completed successfully")
+                                    completed_steps.append(idx)
+                                else:
+                                    self.print_error(f"{Colors.ERROR} {name} failed: {stderr}")
+                                    if not step.get('continue_on_error', False):
+                                        raise Exception(f"Step '{name}' failed and continue_on_error is False")
                             else:
-                                self.print_error(f"{Colors.ERROR} {name} failed: {stderr}")
-                                if not step.get('continue_on_error', False):
-                                    raise Exception(f"Step '{name}' failed and continue_on_error is False")
-                
+                                try:
+                                    process.kill()
+                                    process.wait(timeout=1)
+                                except:
+                                    pass
+                                continue
+
                     except subprocess.TimeoutExpired:
                         self.print_warning(f"{Colors.WARNING} {name} timed out")
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                     except Exception as e:
                         self.print_error(f"{Colors.ERROR} {name} execution error: {e}")
                         if not step.get('continue_on_error', False):
@@ -413,8 +425,7 @@ class WorkflowExecutionEngine:
                 else:
                     self.print_error(f"{Colors.ERROR} some variables were not replaced in command: {command}")
                     raise Exception("variable substitution incomplete")
-                
-                completed_steps.append(idx)
+
                 self.save_state(workflow['name'], target, completed_steps, variables)
 
         except KeyboardInterrupt:
@@ -442,11 +453,11 @@ def cli():
 def run(template, target, dry_run, verbose, resume):
     config = OTYConfig()
     engine = WorkflowExecutionEngine(config)
-    
+
     if not engine.validate_workflow_template(template):
         engine.print_error(f"{Colors.ERROR} Template validation failed!")
         sys.exit(1)
-    
+
     engine.execute_workflow(template, target, dry_run, resume)
 
 @cli.command()
@@ -454,7 +465,7 @@ def run(template, target, dry_run, verbose, resume):
 def validate(template):
     config = OTYConfig()
     engine = WorkflowExecutionEngine(config)
-    
+
     if engine.validate_workflow_template(template):
         engine.print_success(f"{Colors.SUCCESS} Template is valid!")
     else:
@@ -466,7 +477,7 @@ def list_states():
     config = OTYConfig()
     engine = WorkflowExecutionEngine(config)
     states = engine.list_saved_states()
-    
+
     if not states:
         engine.print_info(f"{Colors.INFO} No saved states found")
         return
