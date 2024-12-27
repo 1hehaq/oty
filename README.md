@@ -40,18 +40,7 @@
 ## `Installation`
 
 ```bash
-# Clone the repository
-git clone https://github.com/1hehaq/oty.git
-cd oty
-
-# Install dependencies
-pip install -r requirements.txt
-```
-### `oneliner`
-```bash
-git clone https://github.com/1hehaq/oty.git && cd oty && sudo chmod +x oty.py && mv oty.py /usr/bin/oty && pip3 install -r requirements.txt
-```
-```bash
+pipx install git+https://github.com/1hehaq/oty.git
 oty --version
 ```
 ## `Usage`
