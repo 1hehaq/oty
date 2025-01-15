@@ -2,13 +2,15 @@
   <img src="https://github.com/user-attachments/assets/c2a04338-900c-43ff-932f-9314a3d7bbef" alt="OTY Banner" width="600"/>
 </p>
 
-<p align="center">
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#templates">Templates</a> •
-  <a href="#planned-features">Plans</a>
-</p> 
+<div align="center">
+  
+  <a href="#features">`Features`</a> •
+  <a href="#installation">`Installation`</a> •
+  <a href="#usage">`Usage`</a> •
+  <a href="#templates">`Templates`</a> •
+  <a href="#planned-features">`Plans`</a>
+
+</div> 
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.8+-blue.svg" alt="Python 3.8+">
@@ -16,20 +18,21 @@
   <a href="https://twitter.com/1hehaq"><img src="https://img.shields.io/twitter/follow/1hehaq.svg?logo=X"></a>
 </p>
 
-<h2 align="center"> 
-  
-  `OTY (One Tool and YAML)` 
-
-</h2>
-
-<p align="center">
+<h6 align="center">
   OTY is a powerful, flexible workflow automation tool that transforms complex workflows into simple, reproducible YAML-based scripts. Whether you're a Developer, DevOps engineer, Security Researcher, or System Administrator, OTY streamlines your repetitive tasks with elegance and precision.
-</p>
+</h6>
 
-<hr>
+<br>
+<br>
 
-## `Features`
+<h1 align="center">
+  
+  Features
 
+</h1>
+
+<div align="center">
+  
 | Category | Core Capabilities | Advanced Functionality | Intelligent Automation |
 |----------|------------------|------------------------|------------------------|
 | **Workflow Design** | • _`YAML-based DSL`_ <br>• _`Dynamic Variable Substitution`_ | • _`Template Validation`_ <br>• _`Pre-execution Checks`_ | • _`Intelligent Variable Resolution`_ <br>• _`Contextual Prompting`_ |
@@ -37,13 +40,21 @@
 | **State Tracking** | • _`Persistent State Files`_ <br>• _`Execution Logging`_ | • _`Cross-session Resume`_ <br>• _`Detailed Reporting`_ | • _`Comprehensive Audit Trails`_ <br>• _`Timestamp Tracking`_ |
 | **Flexibility** | • _`Multi-domain Support`_ <br>• _`Customizable Steps`_ | • _`Interactive Variables`_ <br>• _`Conditional Execution`_ | • _`Adaptive Workflow Patterns`_ <br>• _`Extensible Architecture`_ |
 
-## `Installation`
+</div>
+
+<br>
+<br>
+
+## Installation
 
 ```bash
 pipx install git+https://github.com/1hehaq/oty.git
-oty --version
 ```
-## `Usage`
+
+<br>
+<br>
+
+## Usage
 
 ### Basic Workflow Execution
 
@@ -52,11 +63,12 @@ oty --version
 oty run <template> <target>
 
 # Dry run (simulate without executing)
-oty run <template> <target> --dry-run
+oty run <template> <target>
 
 # Resume an interrupted workflow
 oty run <template> <target> --resume
 ```
+
 
 ### Workflow Management
 
@@ -71,7 +83,7 @@ oty list-states
 oty clear-state <workflow_name> <target>
 ```
 
-## `Templates`
+## Templates
 
 OTY uses simple, powerful YAML templates for workflow definition. Here are two example templates:
 
@@ -135,10 +147,20 @@ steps:
 ```
 </details>
 
-## `Planned Features`
+## Planned Features
 
 - [ ] Parallel Step Execution
 - [ ] Enhanced Variable Interpolation
 - [ ] Plugin System
 - [ ] Step Timeout Functionality
 - [ ] Community Templates Library
+
+<br>
+<br>
+<br>
+
+<div align="center">
+  <h6 align="center">leave a star</h6>
+  <a href="https://github.com/1hehaq"><img src="https://img.icons8.com/material-outlined/20/808080/github.png" alt="GitHub"></a>
+  <a href="https://twitter.com/1hehaq"><img src="https://img.icons8.com/material-outlined/20/808080/twitter.png" alt="X"></a>
+</div>
